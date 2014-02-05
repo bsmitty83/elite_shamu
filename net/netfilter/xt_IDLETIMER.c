@@ -83,44 +83,11 @@ static DEFINE_SPINLOCK(timestamp_lock);
 
 static struct kobject *idletimer_tg_kobj;
 
-static bool check_for_delayed_trigger(struct idletimer_tg *timer,
-		struct timespec *ts)
-{
-	bool state;
-	struct timespec temp;
-	spin_lock_bh(&timestamp_lock);
-	timer->work_pending = false;
-	if ((ts->tv_sec - timer->last_modified_timer.tv_sec) > timer->timeout ||
-			timer->delayed_timer_trigger.tv_sec != 0) {
-		state = false;
-		temp.tv_sec = timer->timeout;
-		temp.tv_nsec = 0;
-		if (timer->delayed_timer_trigger.tv_sec != 0) {
-			temp = timespec_add(timer->delayed_timer_trigger, temp);
-			ts->tv_sec = temp.tv_sec;
-			ts->tv_nsec = temp.tv_nsec;
-			timer->delayed_timer_trigger.tv_sec = 0;
-			timer->work_pending = true;
-			schedule_work(&timer->work);
-		} else {
-			temp = timespec_add(timer->last_modified_timer, temp);
-			ts->tv_sec = temp.tv_sec;
-			ts->tv_nsec = temp.tv_nsec;
-		}
-	} else {
-		state = timer->active;
-	}
-	spin_unlock_bh(&timestamp_lock);
-	return state;
-}
-
 static void notify_netlink_uevent(const char *iface, struct idletimer_tg *timer)
 {
 	char iface_msg[NLMSG_MAX_SIZE];
 	char state_msg[NLMSG_MAX_SIZE];
-	char timestamp_msg[NLMSG_MAX_SIZE];
-	char uid_msg[NLMSG_MAX_SIZE];
-	char *envp[] = { iface_msg, state_msg, timestamp_msg, uid_msg, NULL };
+	char *envp[] = { iface_msg, state_msg, NULL };
 	int res;
 	struct timespec ts;
 	uint64_t time_ns;
@@ -142,26 +109,7 @@ static void notify_netlink_uevent(const char *iface, struct idletimer_tg *timer)
 		pr_err("message too long (%d)", res);
 		return;
 	}
-
-	if (state) {
-		res = snprintf(uid_msg, NLMSG_MAX_SIZE, "UID=%u", timer->uid);
-		if (NLMSG_MAX_SIZE <= res)
-			pr_err("message too long (%d)", res);
-	} else {
-		res = snprintf(uid_msg, NLMSG_MAX_SIZE, "UID=");
-		if (NLMSG_MAX_SIZE <= res)
-			pr_err("message too long (%d)", res);
-	}
-
-	time_ns = timespec_to_ns(&ts);
-	res = snprintf(timestamp_msg, NLMSG_MAX_SIZE, "TIME_NS=%llu", time_ns);
-	if (NLMSG_MAX_SIZE <= res) {
-		timestamp_msg[0] = '\0';
-		pr_err("message too long (%d)", res);
-	}
-
-	pr_debug("putting nlmsg: <%s> <%s> <%s> <%s>\n", iface_msg, state_msg,
-		 timestamp_msg, uid_msg);
+	pr_debug("putting nlmsg: <%s> <%s>\n", iface_msg, state_msg);
 	kobject_uevent_env(idletimer_tg_kobj, KOBJ_CHANGE, envp);
 	return;
 
