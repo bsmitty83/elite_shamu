@@ -31,15 +31,15 @@ extern void ftrace_call_old(void);
 #endif
 
 #ifndef __ASSEMBLY__
-
-#if defined(CONFIG_FRAME_POINTER) && !defined(CONFIG_ARM_UNWIND)
 /*
+#if defined(CONFIG_FRAME_POINTER) && !defined(CONFIG_ARM_UNWIND)
+
  * return_address uses walk_stackframe to do it's work.  If both
  * CONFIG_FRAME_POINTER=y and CONFIG_ARM_UNWIND=y walk_stackframe uses unwind
  * information.  For this to work in the function tracer many functions would
  * have to be marked with __notrace.  So for now just depend on
  * !CONFIG_ARM_UNWIND.
- */
+
 
 void *return_address(unsigned int);
 
@@ -51,7 +51,7 @@ extern inline void *return_address(unsigned int level)
 }
 
 #endif
-
+ */
 #define HAVE_ARCH_CALLER_ADDR
 
 #define CALLER_ADDR0 ((unsigned long)__builtin_return_address(0))
