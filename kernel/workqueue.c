@@ -3177,21 +3177,9 @@ static struct workqueue_attrs *wq_sysfs_prep_attrs(struct workqueue_struct *wq)
 {
 	struct workqueue_attrs *attrs;
 
-<<<<<<< HEAD
 	attrs = alloc_workqueue_attrs(GFP_KERNEL);
 	if (!attrs)
 		return NULL;
-=======
-	/* see the comment above the definition of WQ_POWER_EFFICIENT */
-	if ((flags & WQ_POWER_EFFICIENT) && wq_power_efficient)
-		flags |= WQ_UNBOUND;
-
-	
-	/* determine namelen, allocate wq and format name */
-	va_start(args, lock_name);
-	va_copy(args1, args);
-	namelen = vsnprintf(NULL, 0, fmt, args) + 1;
->>>>>>> c3960f1... [LINARO] workqueues: Introduce new flag WQ_POWER_EFFICIENT for power oriented workqueues
 
 	mutex_lock(&wq->mutex);
 	copy_workqueue_attrs(attrs, wq->unbound_attrs);
@@ -4165,6 +4153,10 @@ struct workqueue_struct *__alloc_workqueue_key(const char *fmt,
 		if (!wq->unbound_attrs)
 			goto err_free_wq;
 	}
+	
+	/* see the comment above the definition of WQ_POWER_EFFICIENT */
+	if ((flags & WQ_POWER_EFFICIENT) && wq_power_efficient)
+		flags |= WQ_UNBOUND;
 
 	va_start(args, lock_name);
 	vsnprintf(wq->name, sizeof(wq->name), fmt, args);
@@ -5067,7 +5059,7 @@ static int __init init_workqueues(void)
 					      WQ_FREEZABLE | WQ_POWER_EFFICIENT,
 					      0);
 	BUG_ON(!system_wq || !system_highpri_wq || !system_long_wq ||
-	       !system_unbound_wq || !system_freezable_wq) ||
+	       !system_unbound_wq || !system_freezable_wq ||
 	       !system_power_efficient_wq || !system_freezable_power_efficient_wq);
 	return 0;
 }
