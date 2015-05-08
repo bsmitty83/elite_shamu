@@ -241,8 +241,8 @@ CONFIG_SHELL := $(shell if [ -x "$$BASH" ]; then echo $$BASH; \
 
 HOSTCC       = gcc
 HOSTCXX      = g++
-HOSTCFLAGS   = -Wall -Wmissing-prototypes -Wstrict-prototypes -Ofast -fomit-frame-pointer
-HOSTCXXFLAGS = -Ofast
+HOSTCFLAGS   = -Wall -Wmissing-prototypes -Wstrict-prototypes -O3 -fomit-frame-pointer -fgcse-las -fgraphite -floop-flatten -floop-parallelize-all -ftree-loop-linear -floop-interchange -floop-strip-mine -floop-block -pipe -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-value
+HOSTCXXFLAGS = -O3 -fgcse-las -fgraphite -floop-flatten -floop-parallelize-all -ftree-loop-linear -floop-interchange -floop-strip-mine -floop-block -pipe
 
 # Decide whether to build built-in, modular, or both.
 # Normally, just do built-in.
@@ -340,15 +340,18 @@ DEPMOD		= /sbin/depmod
 PERL		= perl
 CHECK		= sparse
 
+# Use the wrapper for the compiler.  This wrapper scans for new
+# warnings and causes the build to stop upon encountering them.
+#CC		= $(srctree)/scripts/gcc-wrapper.py $(REAL_CC)
+
 CHECKFLAGS     := -D__linux__ -Dlinux -D__STDC__ -Dunix -D__unix__ \
 		  -Wbitwise -Wno-return-void $(CF)
-		  
-GRAPHITE = -fgraphite-identity -floop-parallelize-all -ftree-loop-linear -floop-interchange -floop-strip-mine -floop-block -floop-flatten -floop-nest-optimize -floop-unroll-and-jam
-CFLAGS_MODULE   = $(GRAPHITE) -DMODULE -DNDEBUG
-AFLAGS_MODULE   = $(GRAPHITE) -DMODULE -DNDEBUG
-LDFLAGS_MODULE  = $(GRAPHITE) -DMODULE -DNDEBUG
-CFLAGS_KERNEL	= $(GRAPHITE) -DNDEBUG -fsingle-precision-constant
-AFLAGS_KERNEL	= $(GRAPHITE) -DNDEBUG
+GRAPHITE	= -fgraphite-identity -floop-parallelize-all -ftree-loop-linear -floop-interchange -floop-strip-mine -floop-block -floop-flatten
+FLAGS_MODULE   = $(GRAPHITE)
+AFLAGS_MODULE   = $(GRAPHITE)
+LDFLAGS_MODULE  = $(GRAPHITE)
+CFLAGS_KERNEL	= $(GRAPHITE) -fmodulo-sched -fmodulo-sched-allow-regmoves -ftree-loop-vectorize -ftree-loop-distribute-patterns -ftree-slp-vectorize -fvect-cost-model -ftree-partial-pre -fgcse-after-reload -fgcse-lm -fgcse-sm -fsched-spec-load -ffast-math -fsingle-precision-constant -fpredictive-commoning -mtune=cortex-a15 -mfpu=neon-vfpv4
+AFLAGS_KERNEL	= $(GRAPHITE)
 CFLAGS_GCOV	= -fprofile-arcs -ftest-coverage
 
 
@@ -371,19 +374,15 @@ LINUXINCLUDE    := \
 
 KBUILD_CPPFLAGS := -D__KERNEL__
 
-KBUILD_CFLAGS   := $(GRAPHITE) -Wall -pipe -DNDEBUG -Wundef -Wstrict-prototypes -Wno-trigraphs \
-		   -fstrict-aliasing -fivopts -fipa-pta -fira-hoist-pressure -fno-common \
-		   -ftree-loop-distribution -ftree-loop-if-convert -fprefetch-loop-arrays \
-		   -ftree-vectorize -fstdarg-opt -fsection-anchors -mvectorize-with-neon-quad \
+KBUILD_CFLAGS   := $(GRAPHITE) -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
+		   -fno-strict-aliasing -fno-common \
 		   -Werror-implicit-function-declaration \
-		   -funroll-loops -ftree-loop-im -ftree-loop-ivcanon \
-		   -Wno-format-security -marm -funsafe-math-optimizations \
-           -mtune=cortex-a15 -fbranch-target-load-optimize \
-           -fmodulo-sched -fmodulo-sched-allow-regmoves \
-		   -fgcse-after-reload -fgcse-las \
-		   -fsingle-precision-constant \
+		   -Wno-format-security \
+           -mtune=cortex-a15 \
+           -fmodulo-sched -fmodulo-sched-allow-regmoves -fno-tree-vectorize -ffast-math \
+           -funswitch-loops -fpredictive-commoning -fgcse-after-reload \
+		   -fno-aggressive-loop-optimizations \
 		   -fno-delete-null-pointer-checks
-		   
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS   := -D__ASSEMBLY__
@@ -583,7 +582,9 @@ all: vmlinux
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS	+= -Os $(call cc-disable-warning,maybe-uninitialized,)
 else
-KBUILD_CFLAGS	+= -Ofast
+KBUILD_CFLAGS	+= -O3
+KBUILD_CFLAGS += $(call cc-disable-warning,maybe-uninitialized)
+KBUILD_CFLAGS += $(call cc-disable-warning,array-bounds)
 endif
 
 include $(srctree)/arch/$(SRCARCH)/Makefile
@@ -598,31 +599,41 @@ KBUILD_CFLAGS += $(call cc-option,-fno-reorder-blocks,) \
                  $(call cc-option,-fno-partial-inlining)
 endif
 
-ifneq ($(CONFIG_FRAME_WARN),0)
-KBUILD_CFLAGS += $(call cc-option,-Wframe-larger-than=${CONFIG_FRAME_WARN})
-endif
+# ifneq ($(CONFIG_FRAME_WARN),0)
+# KBUILD_CFLAGS += $(call cc-option,-Wframe-larger-than=${CONFIG_FRAME_WARN})
+# endif
 
-# Force gcc to behave correct even for buggy distributions
-ifndef CONFIG_CC_STACKPROTECTOR
-KBUILD_CFLAGS += $(call cc-option, -fno-stack-protector)
+# Handle stack protector mode.
+ifdef CONFIG_CC_STACKPROTECTOR
+  stackp-flag := -fstack-protector
+  ifeq ($(call cc-option, $(stackp-flag)),)
+    $(warning Cannot use CONFIG_CC_STACKPROTECTOR: \
+	      -fstack-protector not supported by compiler))
+  endif
+else
+  # Force off for distro compilers that enable stack protector by default.
+  stackp-flag := $(call cc-option, -fno-stack-protector)
 endif
+KBUILD_CFLAGS += $(stackp-flag)
 
 # This warning generated too much noise in a regular build.
 # Use make W=1 to enable this warning (see scripts/Makefile.build)
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
 
-ifdef CONFIG_FRAME_POINTER
-KBUILD_CFLAGS	+= -fno-omit-frame-pointer -fno-optimize-sibling-calls
-else
+#ifdef CONFIG_FRAME_POINTER
+#KBUILD_CFLAGS	+= -fno-omit-frame-pointer -fno-optimize-sibling-calls
+#else
 # Some targets (ARM with Thumb2, for example), can't be built with frame
 # pointers.  For those, we don't have FUNCTION_TRACER automatically
 # select FRAME_POINTER.  However, FUNCTION_TRACER adds -pg, and this is
 # incompatible with -fomit-frame-pointer with current GCC, so we don't use
 # -fomit-frame-pointer with FUNCTION_TRACER.
-ifndef CONFIG_FUNCTION_TRACER
+#ifndef CONFIG_FUNCTION_TRACER
 KBUILD_CFLAGS	+= -fomit-frame-pointer
-endif
-endif
+#endif
+#endif
+
+KBUILD_CFLAGS   += $(call cc-option, -fno-var-tracking-assignments)
 
 KBUILD_CFLAGS   += $(call cc-option, -fno-var-tracking-assignments)
 
@@ -636,19 +647,19 @@ KBUILD_CFLAGS 	+= $(call cc-option, -femit-struct-debug-baseonly) \
 		   $(call cc-option,-fno-var-tracking)
 endif
 
-ifdef CONFIG_FUNCTION_TRACER
-ifdef CONFIG_HAVE_FENTRY
-CC_USING_FENTRY	:= $(call cc-option, -mfentry -DCC_USING_FENTRY)
-endif
-KBUILD_CFLAGS	+= -pg $(CC_USING_FENTRY)
-KBUILD_AFLAGS	+= $(CC_USING_FENTRY)
-ifdef CONFIG_DYNAMIC_FTRACE
-	ifdef CONFIG_HAVE_C_RECORDMCOUNT
-		BUILD_C_RECORDMCOUNT := y
-		export BUILD_C_RECORDMCOUNT
-	endif
-endif
-endif
+# ifdef CONFIG_FUNCTION_TRACER
+# ifdef CONFIG_HAVE_FENTRY
+# CC_USING_FENTRY	:= $(call cc-option, -mfentry -DCC_USING_FENTRY)
+# endif
+# KBUILD_CFLAGS	+= -pg $(CC_USING_FENTRY)
+# KBUILD_AFLAGS	+= $(CC_USING_FENTRY)
+# ifdef CONFIG_DYNAMIC_FTRACE
+# 	ifdef CONFIG_HAVE_C_RECORDMCOUNT
+# 		BUILD_C_RECORDMCOUNT := y
+#		export BUILD_C_RECORDMCOUNT
+#	endif
+# endif
+# endif
 
 # We trigger additional mismatches with less inlining
 ifdef CONFIG_DEBUG_SECTION_MISMATCH
